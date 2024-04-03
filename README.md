@@ -2,6 +2,13 @@
 
 This has a collection of Python scripts, machine learning models, and hacky tricks to create a Google Photos style clone that does not require any server side backend -- it can be hosted as a static site, straight from Amazon S3 or equivalent.
 
+## Setup
+* Use chocolatey to install python
+* Make a virtual environment: `python -m venv env`
+* Activate in windows: `.\env\Scripts\activate`
+* Install dependency requirements: `pip install -r requirements.txt`
+* Update dependency requirements: `pip freeze > requirements.txt`
+
 ## Features
 
 * Entirely statically generated and hosted (Just some Javascript, HTML and your images)
@@ -25,7 +32,7 @@ Call the ``generate_photos_gallery.py`` script, which will do the following:
 index.html
 search-tokens.csv
 photos.csv
-img/
+img/ 
 thumbnail/
 js/
 css/
