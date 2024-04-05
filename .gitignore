@@ -12,3 +12,7 @@ tmp/
 hidden/
 env/
 video/
+credentials.json
+img_down/
+secrets.md
+token.pickle

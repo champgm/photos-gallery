@@ -10,7 +10,7 @@ def run_command(command):
 
 def main():
     if len(sys.argv) < 5:
-        print("Usage: python sync_aws.py s3bucketname img-directory thumbnail-directory metadata-file.csv")
+        print("Usage: python scripts/sync_to_aws.py <bucket_name> img thumbnail photos.csv")
         sys.exit(1)
 
     s3bucketname, img_directory, thumbnail_directory, metadata_file = sys.argv[1:5]
@@ -22,8 +22,8 @@ def main():
 
     # Sync directories with AWS
     print("Syncing with AWS")
-    run_command(f'aws s3 sync --follow-symlinks {img_directory} s3://{s3bucketname}/img/')
-    run_command(f'aws s3 sync --follow-symlinks {thumbnail_directory} s3://{s3bucketname}/thumbnail/')
+    run_command(f'aws s3 sync --follow-symlinks --exclude "*.json" {img_directory} s3://{s3bucketname}/img/ --delete' )
+    run_command(f'aws s3 sync --follow-symlinks {thumbnail_directory} s3://{s3bucketname}/thumbnail/ --delete')
     run_command(f'aws s3 sync --follow-symlinks js s3://{s3bucketname}/js/')
     run_command(f'aws s3 sync --follow-symlinks css s3://{s3bucketname}/css/')
     run_command(f'aws s3 cp index.html s3://{s3bucketname}/index.html')
