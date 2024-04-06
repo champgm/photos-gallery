@@ -87,6 +87,7 @@ def download_photo(photo_url, local_path):
             f.write(response.content)
     else:
         print(f"Failed to download {photo_url}, status code: {response.status_code}")
+        raise Exception(f"Failed to download {photo_url}, status code: {response.status_code}")
 
 
 
@@ -122,7 +123,7 @@ def download_album(album_id: str, destination_dir: str):
 @click.option(
     "--destination_dir",
     required=True,
-    default="img_down",
+    default="img",
     help="Destination directory of images",
 )
 def main(album_id: str, destination_dir: str):

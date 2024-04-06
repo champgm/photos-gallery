@@ -1,21 +1,21 @@
 import json
 from pathlib import Path
-import sys
-import typing
 import PIL
 import os
 import numpy as np
 import datetime as dt
 import logging
 import coloredlogs
-import random
-import functools
 import click
-from typing import List, Tuple, Dict, Optional
+from typing import Tuple, Dict, Optional
 from PIL import Image, ImageFile, ExifTags
-from pydantic import BaseModel, ValidationError, parse_obj_as
+from pydantic import ValidationError
 
-from photo_metadata import PhotoMetadata
+from photo_metadata_takeout import TakeoutMetadata
+from photo_metadata_gapis import GapisMetadata
+
+
+default_date = dt.datetime.strptime("1990:1:1 0:0:0", "%Y:%m:%d %H:%M:%S")
 
 
 def open_metadata_file(csv_file: str) -> Dict[str, Tuple[str, dt.datetime, str]]:
@@ -59,12 +59,9 @@ def get_aspect_ratio(im: Image) -> float:
     return aspect_ratio
 
 
-default_date = dt.datetime.strptime("1990:1:1 0:0:0", "%Y:%m:%d %H:%M:%S")
-
-
 def get_date_from_meta(im: Image) -> Optional[dt.datetime]:
     image_path = Path(im.filename)
-    json_path = image_path.with_suffix(image_path.suffix + ".json")
+    json_path = image_path.with_suffix(image_path.suffix + ".meta.json")
 
     if not json_path.exists():
         return default_date
@@ -72,12 +69,12 @@ def get_date_from_meta(im: Image) -> Optional[dt.datetime]:
     with open(json_path, encoding="utf-8") as f:
         metadata = json.load(f)
         try:
-            photo_metadata = PhotoMetadata(**metadata)
+            photo_metadata = GapisMetadata(**metadata)
         except ValidationError as e:
             logging.error(f"Validation error while parsing photo metadata: {e}")
             return default_date
 
-    photo_date_str = photo_metadata.photoTakenTime.formatted
+    photo_date_str = photo_metadata.mediaMetadata.creationTime
     # This Google metadata is weird. Replace non-breaking space and other potential
     # non-standard spaces with a standard space
     photo_date_str = (

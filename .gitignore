@@ -13,6 +13,7 @@ hidden/
 env/
 video/
 credentials.json
-img_down/
+img_google/
+img_takeout/
 secrets.md
 token.pickle

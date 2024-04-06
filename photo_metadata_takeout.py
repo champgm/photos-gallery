@@ -34,7 +34,7 @@ class UploadTypes(BaseModel):
 class GooglePhotosOrigin(BaseModel):
     uploadType: Union[MobileUpload, ComputerUpload, None] = None
 
-class PhotoMetadata(BaseModel):
+class TakeoutMetadata(BaseModel):
     title: str
     description: str
     imageViews: int
