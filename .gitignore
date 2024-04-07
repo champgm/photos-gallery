@@ -15,5 +15,7 @@ video/
 credentials.json
 img_google/
 img_takeout/
-secrets.md
 token.pickle
+notes.md
+images/
+

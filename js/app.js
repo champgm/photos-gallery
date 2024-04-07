@@ -1,7 +1,7 @@
 function popImage(filename) {
   $.magnificPopup.open({
     items: {
-      src: "img/" + filename
+      src: "images/" + filename
     },
     type: 'image'
 

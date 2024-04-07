@@ -33,27 +33,21 @@ This command may open up your web browser and ask for permissions to connect you
 
 Call the `generate_photos_gallery.py` script, which will do the following:
 
+* Extract photo creation date from Google Photos metadata
 * Generate thumbnails for your images
-* Extract photo creation date from metadata
-* Create a static website:
 
 ```
-index.html
-search-tokens.csv
-photos.csv
-img/ 
-thumbnail/
-js/
-css/
+python src\generate_photos_gallery.py
 ```
 
 Test to see if everything works:
 
 ```
-python3 -m http.server 8000
-
-# browse to http://localhost:8000/
+python -m http.server 8000
 ```
+
+browse to http://localhost:8000/
+
 
 ### Synchronize Site To S3
 

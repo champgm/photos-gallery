@@ -15,7 +15,14 @@ from photo_metadata_takeout import TakeoutMetadata
 from photo_metadata_gapis import GapisMetadata
 
 
-default_date = dt.datetime.strptime("1990:1:1 0:0:0", "%Y:%m:%d %H:%M:%S")
+default_date = dt.datetime.fromisoformat("2020-01-30T22:35:20+00:00")
+
+
+def get_script_directory() -> str:
+    script_path = __file__
+    full_path = os.path.realpath(script_path)
+    script_dir = os.path.dirname(full_path)
+    return script_dir
 
 
 def open_metadata_file(csv_file: str) -> Dict[str, Tuple[str, dt.datetime, str]]:
@@ -41,11 +48,11 @@ def open_metadata_file(csv_file: str) -> Dict[str, Tuple[str, dt.datetime, str]]
             split = line[1:].split(",")
             if len(split) == 3:
                 ar = split[0]
-                c_date = dt.datetime.strptime(split[1].strip(), "%Y-%m-%d %H:%M:%S")
+                c_date = dt.datetime.fromisoformat(split[1].strip())
                 tokens = split[2].strip()
             else:
                 ar = split[0]
-                c_date = dt.datetime.strptime(split[1].strip(), "%Y-%m-%d %H:%M:%S")
+                c_date = dt.datetime.fromisoformat(split[1].strip())
                 tokens = ""
             if '"' in filename:
                 filename = filename.replace('"', "")
@@ -81,26 +88,16 @@ def get_date_from_meta(im: Image) -> Optional[dt.datetime]:
         photo_date_str.replace("\u202F", " ").replace("\xa0", " ").replace(" ", " ")
     )
     try:
-        photo_date = dt.datetime.strptime(photo_date_str, "%b %d, %Y, %I:%M:%S %p %Z")
-        return photo_date
+        # The 'Z' denotes UTC, which `fromisoformat` does not parse directly.
+        # You need to replace 'Z' with '+00:00' for UTC designation.
+        photo_date_str = photo_date_str.replace("Z", "+00:00")
+        # Parse the ISO 8601 formatted string
+        date = dt.datetime.fromisoformat(photo_date_str)
+        return date
     except ValueError as ex:
         logging.error(f"Failed to parse date: {ex}")
         logging.error(f"Original photo_date_str: {photo_date_str}")
-        return default_date
-
-
-def get_created_date(im: Image) -> dt.datetime:
-    if im._getexif() and 36867 in im._getexif():
-        created_date = im._getexif()[36867]
-    else:
-        return get_date_from_meta(im)
-    created_date = created_date.strip()
-    photo_date = dt.datetime(1990, 1, 1)
-    try:
-        photo_date = dt.datetime.strptime(created_date, "%Y:%m:%d %H:%M:%S")
-    except Exception as ex:
-        logging.debug(ex)
-    return photo_date
+        raise ex
 
 
 def rotate_image(im: Image) -> Image:
@@ -126,22 +123,23 @@ def regenerate_metadata_csv(source_directory: str, csv_file: str) -> None:
     metadata = {}
 
     with open(csv_file, "w") as csv_out:
-        for f in images:
-            if f.endswith(".json"):
+        for filename in images:
+            if filename.endswith(".json"):
                 # logging.info("Skipping JSON file: {}".format(f))
                 continue
-            logging.info("regenerating {}".format(f))
+            logging.info("regenerating {}".format(filename))
             try:
-                im = Image.open(source_directory + "/" + f)
+                im = Image.open(source_directory + "/" + filename)
 
-                created_date = get_created_date(im)
+                created_date = get_date_from_meta(im)
                 im = rotate_image(im)
                 aspect_ratio = get_aspect_ratio(im)
 
-                metadata[f] = (aspect_ratio, created_date)
+                metadata[filename] = (aspect_ratio, created_date)
                 im.close()
             except Exception as ex:
-                logging.exception("{}: {}".format(f, ex), exc_info=False)
+                logging.exception("{}: {}".format(filename, ex), exc_info=False)
+                raise ex
 
         metadata = {
             k: v
@@ -161,7 +159,8 @@ def process(source_directory: str, thumbnail_directory: str, csv_file: str) -> N
 
     thumbnail_directory = os.path.abspath(thumbnail_directory)
 
-    source_files = os.listdir(source_directory)
+    # don't need thumbnails for JSON files
+    source_files = [f for f in os.listdir(source_directory) if not f.endswith('.json')]
     unprocessed_files = source_files
 
     if os.path.exists("generate.log"):
@@ -174,7 +173,7 @@ def process(source_directory: str, thumbnail_directory: str, csv_file: str) -> N
 
     csv_out = open(csv_file, "w")
 
-    logging.info("unprocessed files: {}".format(len(unprocessed_files)))
+    logging.info("Number of files that need thumbnails: {}".format(len(unprocessed_files)))
 
     for f in unprocessed_files:
         if f.endswith(".json"):
@@ -183,7 +182,7 @@ def process(source_directory: str, thumbnail_directory: str, csv_file: str) -> N
         try:
             im = Image.open(source_directory + "/" + f)
 
-            created_date = get_created_date(im)
+            created_date = get_date_from_meta(im)
             im = rotate_image(im)
             aspect_ratio = get_aspect_ratio(im)
 
@@ -198,6 +197,7 @@ def process(source_directory: str, thumbnail_directory: str, csv_file: str) -> N
             logging.exception("{}: {}".format(ex, f), exc_info=False)
             log_file.write(f + "\n")
             log_file.flush()
+            raise ex
 
     # order the files by date
     metadata = {
@@ -211,37 +211,18 @@ def process(source_directory: str, thumbnail_directory: str, csv_file: str) -> N
 
 
 @click.command()
-@click.option(
-    "--source_dir",
-    required=True,
-    default="img",
-    type=click.Path(exists=True),
-    help="Source directory of images",
-)
-@click.option(
-    "--thumbnail_dir",
-    required=True,
-    default="thumbnail",
-    type=click.Path(),
-    help="Destination directory of thumbnails",
-)
-@click.option(
-    "--metadata_file",
-    default="photos.csv",
-    required=True,
-    help="Filename for csv that has/will have images metadata",
-)
-@click.option(
-    "--regenerate_metadata",
-    is_flag=True,
-    help="Refresh images metadata (aspect ratios, search etc)",
-)
-def main(source_dir, thumbnail_dir, metadata_file, regenerate_metadata):
+def main():
+    script_directory = get_script_directory()
+    parent_directory = os.path.dirname(script_directory)
+    thumbnails_directory = os.path.join(parent_directory, "thumbnail")
+    # web_directory = os.path.join(parent_directory, "web")
+    metadata_file = os.path.join(parent_directory, "photos.csv")
+    image_source_directory = os.path.join(parent_directory, "images")
 
-    if regenerate_metadata:
-        regenerate_metadata_csv(source_dir, metadata_file)
-    else:
-        process(source_dir, thumbnail_dir, metadata_file)
+    print("Regenerating metadata...")
+    regenerate_metadata_csv(image_source_directory, metadata_file)
+    print("Processing images...")
+    process(image_source_directory, thumbnails_directory, metadata_file)
 
 
 if __name__ == "__main__":
