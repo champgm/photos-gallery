@@ -11,8 +11,7 @@ from typing import Tuple, Dict, Optional
 from PIL import Image, ImageFile, ExifTags
 from pydantic import ValidationError
 
-from photo_metadata_takeout import TakeoutMetadata
-from photo_metadata_gapis import GapisMetadata
+from models.photo_metadata_gapis import GapisMetadata
 
 
 default_date = dt.datetime.fromisoformat("2020-01-30T22:35:20+00:00")

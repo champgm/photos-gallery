@@ -1,0 +1,34 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Photo Storage resources
+
+Parameters:
+  BucketName:
+    Type: String
+    Description: The name of the S3 bucket
+    AllowedPattern: '^[a-z0-9.-]{3,63}$'
+    ConstraintDescription: Bucket name must be between 3 and 63 characters long. It can only contain lowercase letters, numbers, periods, and dashes.
+
+Resources:
+  S3Bucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: !Ref BucketName
+      VersioningConfiguration:
+        Status: Suspended
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        IgnorePublicAcls: false
+        BlockPublicPolicy: false
+        RestrictPublicBuckets: false
+
+  BucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref S3Bucket
+      PolicyDocument:
+        Statement:
+          - Sid: "AllowPublicRead"
+            Effect: "Allow"
+            Principal: "*"
+            Action: "s3:GetObject"
+            Resource: !Sub "arn:${AWS::Partition}:s3:::${S3Bucket}/*"
