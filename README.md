@@ -24,12 +24,12 @@ SETUP INSTRUCTIONS HERE
 Sync your photos into a `img` directory using the `sync_from_photos.py` script. This script will download images (and their metadata) from the specified Google Photos album. Here's an example command: 
 
 ```
-python scripts\sync_from_photos.py --album-id "laksjhdlfkjhasdflkhjasdoiquwer_al"
+python src/sync_from_photos.py --album-id "laksjhdlfkjhasdflkhjasdoiquwer_al"
 ```
 
 This command may open up your web browser and ask for permissions to connect your Google Cloud Application to your google account. Make sure you pick the one that contains the pictures you want to sync.
 
-### Generate Static Website
+### Generate Static Website Metadata
 
 Call the `generate_photos_gallery.py` script, which will do the following:
 
@@ -37,7 +37,7 @@ Call the `generate_photos_gallery.py` script, which will do the following:
 * Generate thumbnails for your images
 
 ```
-python src\generate_photos_gallery.py
+python src/generate_photos_gallery.py
 ```
 
 Test to see if everything works:
@@ -51,7 +51,11 @@ browse to http://localhost:8000/
 
 ### Synchronize Site To S3
 
-S3 is a good place to synchronize all content...
+S3 is where the files will be stored for later serving. Synchronize all of the artifacts into your bucket with another script:
+
+```
+python src/sync_to_aws.py littletiger
+```
 
 
 ![Screenshot](screenshot.png)

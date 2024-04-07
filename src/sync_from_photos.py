@@ -123,7 +123,7 @@ def download_album(album_id: str, destination_dir: str):
 @click.option(
     "--destination_dir",
     required=True,
-    default="img",
+    default="images",
     help="Destination directory of images",
 )
 def main(album_id: str, destination_dir: str):
