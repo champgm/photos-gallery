@@ -73,8 +73,9 @@ def track_stack_progress(cf, region_name, stack_name):
     print(f"Done, CloudFormation URL is: {stack_url}")
 
 
-def deploy_cloudformation_stack(stack_name, bucket_name):
+def deploy_cloudformation_stack(stack_name: str, bucket_name: str, region: str):
     # Create a CloudFormation client
+    boto3.setup_default_session(region_name=region)
     cf = boto3.client("cloudformation")
     region_name = cf.meta.region_name  # Get the region name from the client
 
@@ -93,21 +94,29 @@ def deploy_cloudformation_stack(stack_name, bucket_name):
             ],
             Capabilities=["CAPABILITY_IAM"],
         )
-        print(
-            f"Stack '{stack_name}' creation initiated."
-        )
+        print(f"Stack '{stack_name}' creation initiated.")
         track_stack_progress(cf, region_name, stack_name)
     except ClientError as e:
         print(f"Failed to create stack '{stack_name}'. Error: {e}")
         return
-    
 
 
 @click.command()
-@click.option("--stack-name", required=True, help="Name for CloudFormation stack", default="photo-bucket")
+@click.option(
+    "--stack-name",
+    required=True,
+    help="Name for CloudFormation stack",
+    default="photo-bucket",
+)
+@click.option(
+    "--region",
+    required=True,
+    help="The region in which the bucket should be deployed",
+    default="us-west-1",
+)
 @click.option("--bucket-name", required=True, help="Name of S3 bucket to create")
-def main(stack_name: str, bucket_name: str):
-    deploy_cloudformation_stack(stack_name, bucket_name)
+def main(stack_name: str, region: str, bucket_name: str):
+    deploy_cloudformation_stack(stack_name, bucket_name, region)
 
 
 if __name__ == "__main__":

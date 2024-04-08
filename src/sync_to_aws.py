@@ -20,17 +20,19 @@ def main():
     print(f"s3bucketname {s3bucketname}")
 
     # Sync directories with AWS
-    print("Syncing with AWS")
-    run_command(
-        f'aws s3 sync --follow-symlinks --exclude "*.json" images s3://{s3bucketname}/images/ --delete'
-    )
-    run_command(
-        f"aws s3 sync --follow-symlinks thumbnail s3://{s3bucketname}/thumbnail/ --delete"
-    )
+    print("Syncing with AWS...")
     run_command(f"aws s3 sync --follow-symlinks js s3://{s3bucketname}/js/")
     run_command(f"aws s3 sync --follow-symlinks css s3://{s3bucketname}/css/")
     run_command(f"aws s3 cp index.html s3://{s3bucketname}/index.html")
     run_command(f"aws s3 cp photos.csv s3://{s3bucketname}/photos.csv")
+    print("Syncing thumbnails...")
+    run_command(
+        f"aws s3 sync --follow-symlinks thumbnail s3://{s3bucketname}/thumbnail/ --delete"
+    )
+    print("Syncing images...")
+    run_command(
+        f'aws s3 sync --follow-symlinks --exclude "*.json" images s3://{s3bucketname}/images/ --delete'
+    )
 
 
 if __name__ == "__main__":
