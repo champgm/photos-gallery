@@ -27,11 +27,11 @@ def main():
     run_command(f"aws s3 cp photos.csv s3://{s3bucketname}/photos.csv")
     print("Syncing thumbnails...")
     run_command(
-        f"aws s3 sync --follow-symlinks thumbnail s3://{s3bucketname}/thumbnail/ --delete"
+        f"aws s3 sync --follow-symlinks thumbnail s3://{s3bucketname}/thumbnail/"
     )
     print("Syncing images...")
     run_command(
-        f'aws s3 sync --follow-symlinks --exclude "*.json" images s3://{s3bucketname}/images/ --delete'
+        f'aws s3 sync --follow-symlinks --exclude "*.json" images s3://{s3bucketname}/images/'
     )
 
 
