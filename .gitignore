@@ -5,7 +5,6 @@ thumbnail
 *.log
 __pycache__
 trash/
-models/
 .vscode/
 geonames_data/
 tmp/
