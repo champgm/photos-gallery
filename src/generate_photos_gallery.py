@@ -60,25 +60,25 @@ def open_metadata_file(csv_file: str) -> Dict[str, Tuple[str, dt.datetime, str]]
     return processed
 
 
-def get_aspect_ratio(im: Image) -> float:
-    aspect_ratio = im.size[0] / im.size[1]
-    return aspect_ratio
+# def get_aspect_ratio(im: Image) -> float:
+#     aspect_ratio = im.size[0] / im.size[1]
+#     return aspect_ratio
 
 
-def get_date_from_meta(im: Image) -> Optional[dt.datetime]:
-    image_path = Path(im.filename)
-    json_path = image_path.with_suffix(image_path.suffix + ".meta.json")
+def get_date_from_meta(photo_metadata: GapisMetadata) -> Optional[dt.datetime]:
+    # image_path = Path(im.filename)
+    # json_path = image_path.with_suffix(image_path.suffix + ".meta.json")
 
-    if not json_path.exists():
-        return default_date
+    # if not json_path.exists():
+    #     return default_date
 
-    with open(json_path, encoding="utf-8") as f:
-        metadata = json.load(f)
-        try:
-            photo_metadata = GapisMetadata(**metadata)
-        except ValidationError as e:
-            logging.error(f"Validation error while parsing photo metadata: {e}")
-            return default_date
+    # with open(json_path, encoding="utf-8") as f:
+    #     metadata = json.load(f)
+    #     try:
+    #         photo_metadata = GapisMetadata(**metadata)
+    #     except ValidationError as e:
+    #         logging.error(f"Validation error while parsing photo metadata: {e}")
+    #         return default_date
 
     photo_date_str = photo_metadata.mediaMetadata.creationTime
     # This Google metadata is weird. Replace non-breaking space and other potential
@@ -117,25 +117,39 @@ def rotate_image(im: Image) -> Image:
     return im
 
 
-def regenerate_metadata_csv(source_directory: str, csv_file: str) -> None:
+def regenerate_csv(source_directory: str, csv_file: str) -> None:
     images = os.listdir(source_directory)
     metadata = {}
 
     with open(csv_file, "w") as csv_out:
         for filename in images:
-            if filename.endswith(".json"):
+            if not filename.endswith(".json"):
                 # logging.info("Skipping JSON file: {}".format(f))
                 continue
             logging.info("regenerating {}".format(filename))
+            json_path = f"{source_directory}/{filename}"
             try:
-                im = Image.open(source_directory + "/" + filename)
+                gapi_metadata: GapisMetadata = None
+                with open(json_path) as raw_metadata:
+                    raw_metadata = json.load(raw_metadata)
+                    gapi_metadata = GapisMetadata(**raw_metadata)
+                # im = Image.open(source_directory + "/" + filename)
 
-                created_date = get_date_from_meta(im)
-                im = rotate_image(im)
-                aspect_ratio = get_aspect_ratio(im)
+                created_date = get_date_from_meta(gapi_metadata)
+                # im = rotate_image(im)
+                aspect_ratio = float(gapi_metadata.mediaMetadata.width) / float(
+                    gapi_metadata.mediaMetadata.height
+                )
 
                 metadata[filename] = (aspect_ratio, created_date)
-                im.close()
+                # im.close()
+            except ValidationError as ve:
+                logging.error(f"Validation error while processing {filename}:")
+                for error in ve.errors():
+                    logging.error(
+                        f"  {error['loc'][0]}: {error['msg']} (type={error['type']})"
+                    )
+                raise ve
             except Exception as ex:
                 logging.exception("{}: {}".format(filename, ex), exc_info=False)
                 raise ex
@@ -152,76 +166,24 @@ def regenerate_metadata_csv(source_directory: str, csv_file: str) -> None:
         csv_out.close()
 
 
-def process(source_directory: str, thumbnail_directory: str, csv_file: str) -> None:
-    MAX_SIZE = (640, 640)
-    ImageFile.LOAD_TRUNCATED_IMAGES = True
-
-    thumbnail_directory = os.path.abspath(thumbnail_directory)
-
-    # don't need thumbnails for JSON files
-    source_files = [f for f in os.listdir(source_directory) if not f.endswith('.json')]
-    unprocessed_files = source_files
-
-    if os.path.exists("generate.log"):
-        os.remove("generate.log")
-    log_file = open("generate.log", "w")
-
-    thumbnail_files = os.listdir(thumbnail_directory)
-    unprocessed_files = np.setdiff1d(source_files, thumbnail_files)
-    metadata = open_metadata_file(csv_file)
-
-    csv_out = open(csv_file, "w")
-
-    logging.info("Number of files that need thumbnails: {}".format(len(unprocessed_files)))
-
-    for f in unprocessed_files:
-        if f.endswith(".json"):
-            # logging.info("Skipping JSON file: {}".format(f))
-            continue
-        try:
-            im = Image.open(source_directory + "/" + f)
-
-            created_date = get_date_from_meta(im)
-            im = rotate_image(im)
-            aspect_ratio = get_aspect_ratio(im)
-
-            im.thumbnail(MAX_SIZE, PIL.Image.LANCZOS)
-            im.save(thumbnail_directory + "/" + f, format=im.format)
-
-            metadata[f] = ("{:.3f}".format(aspect_ratio), created_date)
-
-            logging.info("processed: {}".format(f))
-            im.close()
-        except Exception as ex:
-            logging.exception("{}: {}".format(ex, f), exc_info=False)
-            log_file.write(f + "\n")
-            log_file.flush()
-            raise ex
-
-    # order the files by date
-    metadata = {
-        k: v
-        for k, v in sorted(metadata.items(), key=lambda item: item[1][1], reverse=True)
-    }
-
-    for k, v in metadata.items():
-        csv_out.write('"{}",{},{}\n'.format(k, v[0], v[1]))
-    csv_out.close()
-
-
 @click.command()
 def main():
     script_directory = get_script_directory()
     parent_directory = os.path.dirname(script_directory)
     thumbnails_directory = os.path.join(parent_directory, "thumbnail")
+    video_thumbnail_directory = os.path.join(parent_directory, "video_thumbnail")
     # web_directory = os.path.join(parent_directory, "web")
-    metadata_file = os.path.join(parent_directory, "photos.csv")
+    image_metadata_file = os.path.join(parent_directory, "photos.csv")
+    video_metadata_file = os.path.join(parent_directory, "videos.csv")
     image_source_directory = os.path.join(parent_directory, "images")
+    video_source_directory = os.path.join(parent_directory, "videos")
 
-    print("Regenerating metadata...")
-    regenerate_metadata_csv(image_source_directory, metadata_file)
-    print("Processing images...")
-    process(image_source_directory, thumbnails_directory, metadata_file)
+    print("Regenerating image metadata...")
+    regenerate_csv(image_source_directory, image_metadata_file)
+    # print("Processing images...")
+    # process_images(image_source_directory, thumbnails_directory, image_metadata_file)
+    print("Regenerating video metadata...")
+    regenerate_csv(video_source_directory, video_metadata_file)
 
 
 if __name__ == "__main__":

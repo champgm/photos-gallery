@@ -25,16 +25,32 @@ def main():
     # run_command(f"aws s3 sync --follow-symlinks js s3://{s3bucketname}/js/")
     # run_command(f"aws s3 sync --follow-symlinks css s3://{s3bucketname}/css/")
     # run_command(f"aws s3 cp index.html s3://{s3bucketname}/index.html")
-    print("Syncing thumbnails...")
+    print("Syncing image thumbnails...")
     run_command(
-        f"aws s3 sync --follow-symlinks thumbnail s3://{s3bucketname}/thumbnail/"
+        f"aws s3 sync --delete --follow-symlinks thumbnail s3://{s3bucketname}/thumbnail/"
+        # f"aws s3 sync --follow-symlinks thumbnail s3://{s3bucketname}/thumbnail/"
     )
     print("Syncing images...")
     run_command(
-        f'aws s3 sync --follow-symlinks --exclude "*.json" images s3://{s3bucketname}/images/'
+        # Do this normally:
+        # f'aws s3 sync --follow-symlinks --exclude "*.json" images s3://{s3bucketname}/images/'
+        
+        # Cleanup with "--delete", don't normally do this:
+        f'aws s3 sync --delete --follow-symlinks --exclude "*.json" images s3://{s3bucketname}/images/'
     )
-    print("Uploading CSV...")
+    
+    print("Syncing video thumbnails...")
+    run_command(
+        # f"aws s3 sync --delete --follow-symlinks thumbnail s3://{s3bucketname}/video_thumbnail/"
+        f"aws s3 sync --follow-symlinks thumbnail s3://{s3bucketname}/video_thumbnail/"
+    )
+    print("Syncing videos...")
+    run_command(
+        f'aws s3 sync --follow-symlinks --exclude "*.json" images s3://{s3bucketname}/videos/'
+    )
+    print("Uploading CSVs...")
     run_command(f"aws s3 cp photos.csv s3://{s3bucketname}/photos.csv")
+    run_command(f"aws s3 cp videos.csv s3://{s3bucketname}/videos.csv")
 
 
 if __name__ == "__main__":
