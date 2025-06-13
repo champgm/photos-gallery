@@ -9,9 +9,10 @@ import json
 import os
 import pickle
 import requests
+import time
 
-# The scope needed to access Google Photos
-SCOPES = ["https://www.googleapis.com/auth/photoslibrary.readonly"]
+# The scope needed to access Google Photos Picker API
+SCOPES = ["https://www.googleapis.com/auth/photospicker.mediaitems.readonly"]
 CREDENTIALS_FILE = "credentials.json"
 TOKEN_FILE = "token.pickle"
 
@@ -61,29 +62,118 @@ def authenticate():
     return creds
 
 
-def list_album_items(service, album_id):
-    request_body = {
-        "albumId": album_id,
-        "pageSize": 100,  # Max is 100
-    }
-    items = []  # Initialize an empty list to store all items
+def create_picker_session(creds):
+    """Create a new Google Photos Picker session and return session info."""
+    session = SessionManager.get_session()
+    
+    response = session.post(
+        "https://photospicker.googleapis.com/v1/sessions",
+        headers={
+            "Authorization": f"Bearer {creds.token}",
+            "Content-Type": "application/json"
+        },
+        json={}  # Empty body - basic session creation
+    )
+    
+    if response.status_code != 200:
+        raise Exception(f"Failed to create picker session: {response.status_code} - {response.text}")
+    
+    session_data = response.json()
+    return session_data
+
+
+def poll_session(creds, session_id):
+    """Poll the session until user has completed media selection."""
+    session = SessionManager.get_session()
+    
     while True:
-        response = service.mediaItems().search(body=request_body).execute()
-        items.extend(response.get("mediaItems", []))
+        response = session.get(
+            f"https://photospicker.googleapis.com/v1/sessions/{session_id}",
+            headers={
+                "Authorization": f"Bearer {creds.token}"
+            }
+        )
+        
+        if response.status_code != 200:
+            raise Exception(f"Failed to poll session: {response.status_code} - {response.text}")
+        
+        session_data = response.json()
+        
+        # Check if user has completed selection
+        if session_data.get("mediaItemsSet", False):
+            print("User has completed media selection!")
+            return session_data
+        
+        # Get polling configuration
+        polling_config = session_data.get("pollingConfig", {})
+        poll_interval = polling_config.get("pollInterval", "10s")
+        timeout_in = polling_config.get("timeoutIn", "300s")
+        
+        # Debug: show what we received
+        print(f"Debug - polling config: {polling_config}")
+        print(f"Debug - poll_interval: {poll_interval} (type: {type(poll_interval)})")
+        print(f"Debug - timeout_in: {timeout_in} (type: {type(timeout_in)})")
+        
+        # Parse interval - handle both "10s" format and plain number format
+        try:
+            if isinstance(poll_interval, str) and poll_interval.endswith('s'):
+                interval_seconds = int(poll_interval.rstrip('s'))
+            else:
+                interval_seconds = int(float(str(poll_interval)))
+        except (ValueError, TypeError):
+            interval_seconds = 10  # Default fallback
+        
+        # Parse timeout - handle both "300s" format and plain number format
+        try:
+            if isinstance(timeout_in, str) and timeout_in.endswith('s'):
+                timeout_seconds = int(timeout_in.rstrip('s'))
+            else:
+                timeout_seconds = int(float(str(timeout_in)))
+        except (ValueError, TypeError):
+            timeout_seconds = 300  # Default fallback
+        
+        print(f"Waiting for user selection... polling every {interval_seconds} seconds")
+        print(f"Session will timeout in {timeout_seconds} seconds")
+        
+        time.sleep(interval_seconds)
 
-        # Check for nextPageToken in the response and update request_body to include it
-        if "nextPageToken" in response:
-            print("Fetching next page of results...")
-            request_body["pageToken"] = response["nextPageToken"]
-        else:
-            break  # Exit loop if no more pages
 
-    if len(items) == 0:
-        print("No items found in album.")
-    else:
-        print(f"Found {len(items)} items in album:")
-        for item in items:
-            print(f"Item {item['filename']} found in album.")
+def list_selected_media_items(creds, session_id):
+    """List all media items selected by the user."""
+    session = SessionManager.get_session()
+    items = []
+    next_page_token = None
+    
+    while True:
+        params = {"sessionId": session_id}
+        if next_page_token:
+            params["pageToken"] = next_page_token
+        
+        response = session.get(
+            "https://photospicker.googleapis.com/v1/mediaItems",
+            headers={
+                "Authorization": f"Bearer {creds.token}"
+            },
+            params=params
+        )
+        
+        if response.status_code != 200:
+            raise Exception(f"Failed to list media items: {response.status_code} - {response.text}")
+        
+        data = response.json()
+        
+        # Add items from this page
+        page_items = data.get("pickedMediaItems", [])
+        items.extend(page_items)
+        
+        print(f"Found {len(page_items)} items on this page, {len(items)} total so far")
+        
+        # Check for next page
+        next_page_token = data.get("nextPageToken")
+        if not next_page_token:
+            break
+    
+    print(f"Total items selected: {len(items)}")
     return items
 
 
@@ -91,10 +181,18 @@ def file_does_not_exist(file_path: str):
     return not os.path.exists(file_path)
 
 
-def download_item(download_url, local_path):
+def download_item(creds, download_url, local_path):
     print(f"Downloading {local_path}")
     session = SessionManager.get_session()
-    response = session.get(download_url)
+    
+    # For Picker API, we need to include authorization header
+    response = session.get(
+        download_url,
+        headers={
+            "Authorization": f"Bearer {creds.token}"
+        }
+    )
+    
     if response.status_code == 200:
         with open(local_path, "wb") as f:
             f.write(response.content)
@@ -111,74 +209,136 @@ def write_metadata(metadata, local_meta_path):
         json.dump(metadata, json_file, indent=2)
 
 
-def download_album(
-    album_id: str,
+def get_filename_from_media_item(item):
+    """Extract filename from picked media item."""
+    # Try to get filename from mediaFile if available
+    media_file = item.get("mediaFile", {})
+    filename = media_file.get("filename")
+    
+    if not filename:
+        # Fallback: use the ID as filename with appropriate extension based on mimeType
+        mime_type = media_file.get("mimeType", "")
+        item_id = item.get("id", "unknown")
+        
+        if mime_type.startswith("image/"):
+            if "jpeg" in mime_type or "jpg" in mime_type:
+                extension = ".jpg"
+            elif "png" in mime_type:
+                extension = ".png"
+            elif "gif" in mime_type:
+                extension = ".gif"
+            else:
+                extension = ".jpg"  # default for images
+        elif mime_type.startswith("video/"):
+            if "mp4" in mime_type:
+                extension = ".mp4"
+            elif "mov" in mime_type:
+                extension = ".mov"
+            elif "avi" in mime_type:
+                extension = ".avi"
+            else:
+                extension = ".mp4"  # default for videos
+        else:
+            extension = ".bin"  # unknown type
+        
+        filename = f"{item_id}{extension}"
+    
+    return filename
+
+
+def download_selected_media(
+    creds,
+    session_id: str,
     image_dir: str,
     image_thumbnail_dir: str,
     video_dir: str,
     video_thumbnail_dir: str,
 ):
-    creds = authenticate()
-    service = build("photoslibrary", "v1", credentials=creds, static_discovery=False)
-    items = list_album_items(service, album_id)
-
-    if not os.path.exists(image_dir):
-        os.makedirs(image_dir)
-    if not os.path.exists(video_dir):
-        os.makedirs(video_dir)
-    if not os.path.exists(video_thumbnail_dir):
-        os.makedirs(video_thumbnail_dir)
-
+    """Download all media items selected by the user."""
+    
+    # Create directories if they don't exist
+    for directory in [image_dir, image_thumbnail_dir, video_dir, video_thumbnail_dir]:
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+    
+    # Get selected media items
+    items = list_selected_media_items(creds, session_id)
+    
     for item in items:
-        base_url = item["baseUrl"]
-        file_path = (
-            f"{image_dir}/{item['filename']}"
-            if item["mimeType"].startswith("image")
-            else f"{video_dir}/{item['filename']}"
-        )
-        meta_file_path = f"{file_path}.meta.json"
-
-        # Grab metadata
-        item_metadata = None
-        if file_does_not_exist(meta_file_path):
-            item_metadata = service.mediaItems().get(mediaItemId=item["id"]).execute()
-            write_metadata(item_metadata, meta_file_path)
+        media_file = item.get("mediaFile", {})
+        base_url = media_file.get("baseUrl")
+        mime_type = media_file.get("mimeType", "")
+        filename = get_filename_from_media_item(item)
+        
+        if not base_url:
+            print(f"Warning: No baseUrl found for item {item.get('id', 'unknown')}")
+            continue
+        
+        # Determine file path based on media type
+        if mime_type.startswith("image"):
+            file_path = f"{image_dir}/{filename}"
+            thumbnail_path = f"{image_thumbnail_dir}/{filename}"
+        elif mime_type.startswith("video"):
+            file_path = f"{video_dir}/{filename}"
+            thumbnail_path = f"{video_thumbnail_dir}/{filename}.jpg"  # video thumbnails are typically JPG
         else:
-            item_metadata = json.load(open(meta_file_path))
+            print(f"Warning: Unknown media type {mime_type} for item {item.get('id', 'unknown')}")
+            continue
+        
+        # Create metadata file path
+        meta_file_path = f"{file_path}.meta.json"
+        
+        # Save metadata
+        if file_does_not_exist(meta_file_path):
+            write_metadata(item, meta_file_path)
+        else:
             print(f"Skipped {meta_file_path}")
-
-        if item_metadata is not None and item_metadata["mimeType"].startswith("image"):
-            # Download full resolution image
-            if file_does_not_exist(file_path):
-                download_url = f"{base_url}=d"  # =d for full resolution
-                download_item(download_url, file_path)
+        
+        # Download full resolution media
+        if file_does_not_exist(file_path):
+            if mime_type.startswith("image"):
+                download_url = f"{base_url}=d"  # =d for full resolution image
+            elif mime_type.startswith("video"):
+                download_url = f"{base_url}=dv"  # =dv for video download
             else:
-                print(f"Skipped {file_path}")
-            # Download thumbnail
-            thumbnail_path = f"{image_thumbnail_dir}/{item['filename']}"
-            if file_does_not_exist(thumbnail_path):
+                download_url = base_url
+            
+            download_item(creds, download_url, file_path)
+        else:
+            print(f"Skipped {file_path}")
+        
+        # Download thumbnail
+        if file_does_not_exist(thumbnail_path):
+            if mime_type.startswith("image"):
                 thumbnail_url = f"{base_url}=w640-h640"
-                download_item(thumbnail_url, thumbnail_path)
+            elif mime_type.startswith("video"):
+                thumbnail_url = f"{base_url}=w640-h640"  # Video thumbnail
             else:
-                print(f"Skipped {thumbnail_path}")
-        elif item_metadata is not None and item_metadata["mimeType"].startswith("video"):
-            # Download video
-            if file_does_not_exist(file_path):
-                download_url = f"{base_url}=dv"  # =dv for bytes
-                download_item(download_url, file_path)
-            else:
-                print(f"Skipped {file_path}")
-            # Download thumbnail
-            thumbnail_path = f"{video_thumbnail_dir}/{item['filename']}.jpg"
-            if file_does_not_exist(thumbnail_path):
-                thumbnail_url = f"{base_url}=d-w640-h640"
-                download_item(thumbnail_url, thumbnail_path)
-            else:
-                print(f"Skipped {thumbnail_path}")
+                thumbnail_url = f"{base_url}=w640-h640"
+            
+            download_item(creds, thumbnail_url, thumbnail_path)
+        else:
+            print(f"Skipped {thumbnail_path}")
+
+
+def cleanup_session(creds, session_id):
+    """Clean up the session by deleting it."""
+    session = SessionManager.get_session()
+    
+    response = session.delete(
+        f"https://photospicker.googleapis.com/v1/sessions/{session_id}",
+        headers={
+            "Authorization": f"Bearer {creds.token}"
+        }
+    )
+    
+    if response.status_code == 200:
+        print("Session cleaned up successfully")
+    else:
+        print(f"Warning: Failed to cleanup session: {response.status_code}")
 
 
 @click.command()
-@click.option("--album-id", required=True, help="ID for the album to download")
 @click.option(
     "--image_dir",
     required=True,
@@ -204,15 +364,63 @@ def download_album(
     help="Destination directory for video thumbnails",
 )
 def main(
-    album_id: str,
     image_dir: str,
     image_thumbnail_dir: str,
     video_dir: str,
     video_thumbnail_dir: str,
 ):
-    download_album(
-        album_id, image_dir, image_thumbnail_dir, video_dir, video_thumbnail_dir
-    )
+    """
+    Download photos and videos from Google Photos using the Picker API.
+    
+    This tool uses the Google Photos Picker API which requires user interaction
+    to select media items. The process involves:
+    1. Creating a picker session
+    2. Opening the picker URL in a browser
+    3. User selects photos/videos
+    4. Downloading the selected items
+    """
+    print("Starting Google Photos Picker download process...")
+    
+    # Authenticate
+    creds = authenticate()
+    print("Authentication successful!")
+    
+    # Create picker session
+    print("Creating picker session...")
+    session_data = create_picker_session(creds)
+    session_id = session_data["id"]
+    picker_uri = session_data["pickerUri"]
+    
+    print("\n" + "="*60)
+    print("IMPORTANT: Please open the following URL in your browser:")
+    print(f"\n{picker_uri}\n")
+    print("Select the photos and videos you want to download.")
+    print("Click 'Done' when you have finished selecting.")
+    print("="*60 + "\n")
+    
+    # Poll session until user completes selection
+    try:
+        print("Starting to poll for user selection...")
+        poll_session(creds, session_id)
+        
+        # Download selected media
+        print("User selection complete! Starting download...")
+        download_selected_media(
+            creds, session_id, image_dir, image_thumbnail_dir, video_dir, video_thumbnail_dir
+        )
+        
+        print("Download completed successfully!")
+        
+    except Exception as e:
+        print(f"Error occurred: {e}")
+        print(f"Error type: {type(e).__name__}")
+        import traceback
+        traceback.print_exc()
+        
+    finally:
+        # Clean up session
+        print("Cleaning up session...")
+        cleanup_session(creds, session_id)
 
 
 if __name__ == "__main__":
