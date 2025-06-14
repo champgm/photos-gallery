@@ -78,8 +78,7 @@ def create_picker_session(creds):
     if response.status_code != 200:
         raise Exception(f"Failed to create picker session: {response.status_code} - {response.text}")
     
-    session_data = response.json()
-    return session_data
+    return response.json()
 
 
 def poll_session(creds, session_id):
@@ -107,14 +106,8 @@ def poll_session(creds, session_id):
         # Get polling configuration
         polling_config = session_data.get("pollingConfig", {})
         poll_interval = polling_config.get("pollInterval", "10s")
-        timeout_in = polling_config.get("timeoutIn", "300s")
         
-        # Debug: show what we received
-        print(f"Debug - polling config: {polling_config}")
-        print(f"Debug - poll_interval: {poll_interval} (type: {type(poll_interval)})")
-        print(f"Debug - timeout_in: {timeout_in} (type: {type(timeout_in)})")
-        
-        # Parse interval - handle both "10s" format and plain number format
+        # Parse interval - handle both string and number formats
         try:
             if isinstance(poll_interval, str) and poll_interval.endswith('s'):
                 interval_seconds = int(poll_interval.rstrip('s'))
@@ -123,18 +116,7 @@ def poll_session(creds, session_id):
         except (ValueError, TypeError):
             interval_seconds = 10  # Default fallback
         
-        # Parse timeout - handle both "300s" format and plain number format
-        try:
-            if isinstance(timeout_in, str) and timeout_in.endswith('s'):
-                timeout_seconds = int(timeout_in.rstrip('s'))
-            else:
-                timeout_seconds = int(float(str(timeout_in)))
-        except (ValueError, TypeError):
-            timeout_seconds = 300  # Default fallback
-        
         print(f"Waiting for user selection... polling every {interval_seconds} seconds")
-        print(f"Session will timeout in {timeout_seconds} seconds")
-        
         time.sleep(interval_seconds)
 
 
@@ -161,14 +143,11 @@ def list_selected_media_items(creds, session_id):
             raise Exception(f"Failed to list media items: {response.status_code} - {response.text}")
         
         data = response.json()
-        
-        # Add items from this page
-        page_items = data.get("pickedMediaItems", [])
+        page_items = data.get("mediaItems", [])
         items.extend(page_items)
         
         print(f"Found {len(page_items)} items on this page, {len(items)} total so far")
         
-        # Check for next page
         next_page_token = data.get("nextPageToken")
         if not next_page_token:
             break
@@ -185,7 +164,6 @@ def download_item(creds, download_url, local_path):
     print(f"Downloading {local_path}")
     session = SessionManager.get_session()
     
-    # For Picker API, we need to include authorization header
     response = session.get(
         download_url,
         headers={
@@ -205,45 +183,39 @@ def download_item(creds, download_url, local_path):
 
 
 def write_metadata(metadata, local_meta_path):
+    """
+    Write metadata, transforming Picker API structure to Library API structure
+    for backward compatibility with generate_photos_gallery.py
+    """
+    # Transform Picker API structure to Library API structure
+    media_file = metadata.get("mediaFile", {})
+    media_file_metadata = media_file.get("mediaFileMetadata", {})
+    
+    # Create Library API compatible structure
+    transformed_metadata = {
+        "full": metadata,
+        "id": metadata.get("id"),
+        "filename": media_file.get("filename") or metadata.get("filename"),
+        "mimeType": media_file.get("mimeType"),
+        "baseUrl": media_file.get("baseUrl"),
+        # Add missing required fields with reasonable defaults
+        "productUrl": f"https://photos.google.com/lr/photo/{metadata.get('id', '')}",
+        "mediaMetadata": {
+            "creationTime": metadata.get("createTime", ""),
+            "width": str(media_file_metadata.get("width", "0")),
+            "height": str(media_file_metadata.get("height", "0")),
+            "photo": {},
+            "video": {},
+        }
+    }
+    
+    # Keep any additional fields from the original metadata
+    for key, value in metadata.items():
+        if key not in transformed_metadata and key != "mediaFile":
+            transformed_metadata[key] = value
+    
     with open(local_meta_path, "w") as json_file:
-        json.dump(metadata, json_file, indent=2)
-
-
-def get_filename_from_media_item(item):
-    """Extract filename from picked media item."""
-    # Try to get filename from mediaFile if available
-    media_file = item.get("mediaFile", {})
-    filename = media_file.get("filename")
-    
-    if not filename:
-        # Fallback: use the ID as filename with appropriate extension based on mimeType
-        mime_type = media_file.get("mimeType", "")
-        item_id = item.get("id", "unknown")
-        
-        if mime_type.startswith("image/"):
-            if "jpeg" in mime_type or "jpg" in mime_type:
-                extension = ".jpg"
-            elif "png" in mime_type:
-                extension = ".png"
-            elif "gif" in mime_type:
-                extension = ".gif"
-            else:
-                extension = ".jpg"  # default for images
-        elif mime_type.startswith("video/"):
-            if "mp4" in mime_type:
-                extension = ".mp4"
-            elif "mov" in mime_type:
-                extension = ".mov"
-            elif "avi" in mime_type:
-                extension = ".avi"
-            else:
-                extension = ".mp4"  # default for videos
-        else:
-            extension = ".bin"  # unknown type
-        
-        filename = f"{item_id}{extension}"
-    
-    return filename
+        json.dump(transformed_metadata, json_file, indent=2)
 
 
 def download_selected_media(
@@ -268,24 +240,32 @@ def download_selected_media(
         media_file = item.get("mediaFile", {})
         base_url = media_file.get("baseUrl")
         mime_type = media_file.get("mimeType", "")
-        filename = get_filename_from_media_item(item)
         
-        if not base_url:
-            print(f"Warning: No baseUrl found for item {item.get('id', 'unknown')}")
+        # Get filename - try mediaFile first, then item directly for compatibility
+        filename = media_file.get("filename") or item.get("filename")
+        if not filename:
+            # Fallback: use ID with extension
+            item_id = item.get("id", "unknown")
+            ext = ".jpg" if mime_type.startswith("image") else ".mp4" if mime_type.startswith("video") else ".bin"
+            filename = f"{item_id}{ext}"
+            print(f"Warning: No filename for item {item_id}, would have used \"{filename}\"")
             continue
         
-        # Determine file path based on media type
+        if not base_url:
+            print(f"Warning: No baseUrl found for item {filename}")
+            continue
+        
+        # Determine file paths
         if mime_type.startswith("image"):
             file_path = f"{image_dir}/{filename}"
             thumbnail_path = f"{image_thumbnail_dir}/{filename}"
         elif mime_type.startswith("video"):
             file_path = f"{video_dir}/{filename}"
-            thumbnail_path = f"{video_thumbnail_dir}/{filename}.jpg"  # video thumbnails are typically JPG
+            thumbnail_path = f"{video_thumbnail_dir}/{filename}.jpg"
         else:
-            print(f"Warning: Unknown media type {mime_type} for item {item.get('id', 'unknown')}")
+            print(f"Warning: Unknown media type {mime_type} for {filename}")
             continue
         
-        # Create metadata file path
         meta_file_path = f"{file_path}.meta.json"
         
         # Save metadata
@@ -297,11 +277,11 @@ def download_selected_media(
         # Download full resolution media
         if file_does_not_exist(file_path):
             if mime_type.startswith("image"):
-                download_url = f"{base_url}=d"  # =d for full resolution image
+                download_url = f"{base_url}=d"  # =d for full resolution
             elif mime_type.startswith("video"):
                 download_url = f"{base_url}=dv"  # =dv for video download
             else:
-                download_url = base_url
+                download_url = f"{base_url}=d"
             
             download_item(creds, download_url, file_path)
         else:
@@ -309,13 +289,7 @@ def download_selected_media(
         
         # Download thumbnail
         if file_does_not_exist(thumbnail_path):
-            if mime_type.startswith("image"):
-                thumbnail_url = f"{base_url}=w640-h640"
-            elif mime_type.startswith("video"):
-                thumbnail_url = f"{base_url}=w640-h640"  # Video thumbnail
-            else:
-                thumbnail_url = f"{base_url}=w640-h640"
-            
+            thumbnail_url = f"{base_url}=w640-h640"
             download_item(creds, thumbnail_url, thumbnail_path)
         else:
             print(f"Skipped {thumbnail_path}")
@@ -400,11 +374,9 @@ def main(
     
     # Poll session until user completes selection
     try:
-        print("Starting to poll for user selection...")
         poll_session(creds, session_id)
         
         # Download selected media
-        print("User selection complete! Starting download...")
         download_selected_media(
             creds, session_id, image_dir, image_thumbnail_dir, video_dir, video_thumbnail_dir
         )
@@ -413,13 +385,9 @@ def main(
         
     except Exception as e:
         print(f"Error occurred: {e}")
-        print(f"Error type: {type(e).__name__}")
-        import traceback
-        traceback.print_exc()
         
     finally:
         # Clean up session
-        print("Cleaning up session...")
         cleanup_session(creds, session_id)
 
 

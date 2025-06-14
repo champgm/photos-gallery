@@ -94,7 +94,7 @@ def regenerate_csv(
                 continue
             meta_file_name = filename
             file_name = filename.replace(".meta.json", "")
-            logging.info("regenerating {}".format(file_name))
+            # logging.info("regenerating {}".format(file_name))
             json_path = f"{source_directory}/{meta_file_name}"
             try:
                 gapi_metadata: GapisMetadata = None
@@ -121,6 +121,7 @@ def regenerate_csv(
 
             except ValidationError as ve:
                 logging.error(f"Validation error while processing {meta_file_name}:")
+                logging.error(f"Full Error: {ve}")
                 for error in ve.errors():
                     logging.error(
                         f"  {error['loc'][0]}: {error['msg']} (type={error['type']})"
